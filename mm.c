@@ -37,10 +37,6 @@ team_t team = {
   "josetrejos2019@u.northwestern.edu"
 };
 
-
-static char *mem_heap; // Points to first byte of heap
-static char *mem_brk; //Points to last byte of heap +1
-static char *mem_max_addr; //Max Legal Address +1
 static char *heap_listp; //Points to Prologue block
 
 /* basic constants and macros*/
@@ -58,7 +54,7 @@ static char *heap_listp; //Points to Prologue block
 #define PUT(p, val) (*(unsigned int *)(p) = (val))
 
 /* read the size and allocated fields from address p */
-#define GET_SIZE(p) (GET(p) & -0x7)
+#define GET_SIZE(p) (GET(p) & ~0x7)
 #define GET_ALLOC(p) (GET(p) & 0x1)
 
 /* Given block ptr bp, compute address on its header and footer */
@@ -95,6 +91,7 @@ else {
 }
 
 */
+\
 
 static void place(void *bp, size_t asize){
   size_t csize = GET_SIZE(HDRP(bp));
@@ -198,9 +195,13 @@ int mm_init(void)
   heap_listp += (2*WSIZE);
   //Extend empty heap with CHUNKSIZE bytes
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
+    printf("initialization fails \n");
+    print_heap();
     return -1;
   }
-  mm_check();
+  //print_heap();
+  printf("initialization happens \n");
+  print_heap();
   return 0;
 }
 
@@ -217,16 +218,15 @@ void *mm_malloc(size_t size)
   char *bp;
 
   /*Ignore spurious requests */
-  if(size == 0)
-  return NULL;
+  if(size == 0){
+    return NULL;
+  }
 
   /* adjust block size to include overhead and alignment range */
-  if (size <= DSIZE)
-  {
+  if (size <= DSIZE){
     asize = 2*DSIZE;
   }
-  else
-  {
+  else{
     asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
   }
 
@@ -238,8 +238,9 @@ void *mm_malloc(size_t size)
 
   /* no fit found. get more memory and place the block */
   extendsize = MAX(asize,CHUNKSIZE);
-  if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
-  return NULL;
+  if ((bp = extend_heap(extendsize/WSIZE)) == NULL){
+    return NULL;
+  }
   place(bp, asize);
   mm_check();
   return bp;
@@ -261,6 +262,7 @@ void mm_free(void *bp)
 /*
 mm_realloc - Implemented simply in terms of mm_malloc and mm_free
 */
+/*
 void *mm_realloc(void *ptr, size_t size)
 {
   void *oldptr = ptr;
@@ -276,8 +278,59 @@ void *mm_realloc(void *ptr, size_t size)
   memcpy(newptr, oldptr, copySize);
   mm_free(oldptr);
   return newptr;
+}*/
+void *mm_realloc(void *ptr, size_t size)
+{
+  void* oldptr = ptr;
+  void* newptr = mm_malloc(size);
+  if(newptr == NULL){
+    return mm_malloc(size);
+  }
+  if(size == 0){
+    mm_free(ptr);
+    return;
+  }
+  size_t copySize = *(size_t *)((char *) oldptr - SIZE_T_SIZE);
+  if(size < copySize){
+    copySize = size;
+  }
+  memcpy(newptr, oldptr, copySize);
+  mm_free(oldptr);
+  return newptr;
 }
 
+
+void mm_check(){};
+
+
+
+/* FAKE CHECKER */
+
+static void print_block(void *bp) {
+    printf("\tp: %p; ", bp);
+    printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
+    printf("hsize: %d; ", GET_SIZE(HDRP(bp)));
+    printf("fsize: %d; ", GET_SIZE(FTRP(bp)));
+    printf("pred: %p, succ: %p\n", (void *) GET(PREV_BLKP(bp)), (void *) GET(NEXT_BLKP(bp)));
+}
+
+ void check_block(void *bp) {
+    if (GET_SIZE(HDRP(bp)) % DSIZE)
+        printf("\terror: not doubly aligned\n");
+    if (GET(HDRP(bp)) != GET(FTRP(bp)))
+        printf("\terror: header & foot do not match\n");
+}
+
+ void print_heap() {
+    printf("heap\n");
+    void *bp;
+    for (bp = heap_listp+DSIZE; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        check_block(bp);
+        print_block(bp);
+    }
+    printf("heap-end\n");
+}
+//void mm_check(){};
 /*
 void mm_check(void)
 {
