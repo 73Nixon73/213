@@ -64,6 +64,21 @@ static char *heap_listp; //Points to Prologue block
 /* given block ptr bp, compute address of next and prev blocks */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
+#define ALIGNMENT 8
+
+/* rounds up to the nearest multiple of ALIGNMENT */
+#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
+
+
+#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+
+static void *find_fit(size_t asize);
+static void place(void *bp, size_t asize);
+static void *coalesce(void *bp);
+static void *extend_heap(size_t words);
+
+
+
 
 static void *find_fit(size_t asize){ //first fit, BAD
   void *bp;
@@ -162,7 +177,7 @@ static void *extend_heap(size_t words)
   size_t size;
 
   //Allocate even number of words for ALIGNMENT
-  size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+  size = (words % 2) ? ((words+1) * WSIZE) : (words * WSIZE);
   if((long)(bp = mem_sbrk(size)) == -1){
     return NULL;
   }
@@ -174,13 +189,7 @@ static void *extend_heap(size_t words)
   return coalesce(bp);
 }
 /* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
 
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
-
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
 
 /*
@@ -232,30 +241,19 @@ void *mm_malloc(size_t size)
   }
 
   /* search the free list for a fit */
-  if ((bp = find_fit(asize)) != NULL) {
+  bp = find_fit(asize);
+  if ((bp) != NULL) {
     place(bp, asize);
-
-    if (bp > mem_heap_hi()){
-        printf("Found:");
-        printf("%s\n", __func__);
-      }
     return bp;
   }
 
   /* no fit found. get more memory and place the block */
-  extendsize = MAX(asize,CHUNKSIZE);
-  if ((bp = extend_heap(extendsize/WSIZE)) == NULL){
-    if (bp > mem_heap_hi()){
-        printf("Found:");
-        printf("%s\n", __func__);
-      }
+  extendsize = MAX(asize, CHUNKSIZE);
+  bp = extend_heap(extendsize/WSIZE);
+  if (bp == NULL){
     return NULL;
   }
   place(bp, asize);
-  if (bp > mem_heap_hi()){
-      printf("Found:");
-      printf("%s\n", __func__);
-    }
   return bp;
 
 }
@@ -299,12 +297,12 @@ void *mm_realloc(void *ptr, size_t size)
   return newptr;
 }
 
-
+/*
 void m_check(void *bp){
      if (bp > mem_heap_hi())
          printf("Found:");
 };
-
+*/
 
 
 /* FAKE CHECKER */
