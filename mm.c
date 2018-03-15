@@ -23,23 +23,24 @@
  * provide your team information in the following struct.
  ********************************************************/
 team_t team = {
-    /* Team name */
-    "Group 6",
-    "Jose Trejos"
-
-    "josetrejos2019@u.northwestern.edu",
-    /* First member's email address */"
-    "Chloe Mueller",
-    /* Second member's full name (leave blank if none) */
-    "chloemueller2020@u.northwestern.edu
-    /* Second member's email address (leave blank if none) */
-
+  team_t team = {
+  /* Team name */
+  "Group 6",
+  /* First member's full name */
+  "Chloe Mueller",
+  /* First member's email address */
+  "chloemueller2020@u.northwestern.edu",
+  /* Second member's full name (leave blank if none) */
+  "Jose Trejos",
+  /* Second member's email address (leave blank if none) */
+  "josetrejos2019@u.northwestern.edu"
 };
+
 
 static char *mem_heap; // Points to first byte of heap
 static char *mem_brk; //Points to last byte of heap +1
-static char *mem_max_addr //Max Legal Address +1
-static char *heap_listp //Points to Prologue block
+static char *mem_max_addr; //Max Legal Address +1
+static char *heap_listp; //Points to Prologue block
 
 /* basic constants and macros*/
 #define WSIZE 4   /* word header/footer size (bytes) */
@@ -171,7 +172,7 @@ void *mm_malloc(size_t size)
     char *bp;
 
     /*Ignore spurious requests */
-    if(size == O)
+    if(size == 0)
       return NULL;
 
     /* adjust block size to include overhead and alignment range */
