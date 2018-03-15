@@ -69,15 +69,13 @@ static char *heap_listp; //Points to Prologue block
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
-
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
+/* helper function prototypes */
 static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
-
-
 
 
 static void *find_fit(size_t asize){ //first fit, BAD
@@ -126,7 +124,7 @@ static void place(void *bp, size_t asize){
 static void *coalesce(void *bp)
 {
   size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-  size_t next_alloc = GET_ALLOC(FTRP(NEXT_BLKP(bp)));
+  size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
   size_t size = GET_SIZE(HDRP(bp));
 
   if(prev_alloc && next_alloc){
@@ -227,6 +225,11 @@ void *mm_malloc(size_t size)
   size_t extendsize; /* Amount to extend heap if no fit */
   char *bp;
 
+
+  if(heap_listp == 0){
+    mm_init();
+  }
+
   /*Ignore spurious requests */
   if(size == 0){
     return NULL;
@@ -263,7 +266,14 @@ void *mm_malloc(size_t size)
 */
 void mm_free(void *bp)
 {
+  if(bp == 0)
+    return;
+
   size_t size = GET_SIZE(HDRP(bp));
+
+  if (heap_listp == 0){
+    mm_init();
+  }
 
   PUT(HDRP(bp), PACK(size,0));
   PUT(FTRP(bp), PACK(size,0));
