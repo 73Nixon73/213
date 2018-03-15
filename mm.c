@@ -136,6 +136,10 @@ static void *coalesce(void *bp)
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
     bp = PREV_BLKP(bp);
   }
+  if (bp > mem_heap_hi()){
+      printf("Found:");
+      printf("%s\n", __func__);
+    }
   return bp;
 }
 /*
@@ -143,7 +147,7 @@ void *mem_sbrk(int incr)
 {
 char *old_brk = mem_brk;
 
-if((incr < 0) || ((mem_brk + incr) > mem_max_addr)){
+if((incr < 0) || ((mem_brk + incr) > mem_heap_hi())){
 errno = ENOMEM;
 fprintf(stderr, "ERROR: mem_sbrk failed. Ran out of memory...\n");
 return (void *)-1;
@@ -196,12 +200,10 @@ int mm_init(void)
   //Extend empty heap with CHUNKSIZE bytes
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
     printf("initialization fails \n");
-    print_heap();
     return -1;
   }
   //print_heap();
   printf("initialization happens \n");
-  print_heap();
   return 0;
 }
 
@@ -212,7 +214,6 @@ int mm_init(void)
 */
 void *mm_malloc(size_t size)
 {
-  mm_check();
   size_t asize; /* Adjusted block Size */
   size_t extendsize; /* Amount to extend heap if no fit */
   char *bp;
@@ -233,16 +234,28 @@ void *mm_malloc(size_t size)
   /* search the free list for a fit */
   if ((bp = find_fit(asize)) != NULL) {
     place(bp, asize);
+
+    if (bp > mem_heap_hi()){
+        printf("Found:");
+        printf("%s\n", __func__);
+      }
     return bp;
   }
 
   /* no fit found. get more memory and place the block */
   extendsize = MAX(asize,CHUNKSIZE);
   if ((bp = extend_heap(extendsize/WSIZE)) == NULL){
+    if (bp > mem_heap_hi()){
+        printf("Found:");
+        printf("%s\n", __func__);
+      }
     return NULL;
   }
   place(bp, asize);
-  mm_check();
+  if (bp > mem_heap_hi()){
+      printf("Found:");
+      printf("%s\n", __func__);
+    }
   return bp;
 
 }
@@ -256,13 +269,14 @@ void mm_free(void *bp)
 
   PUT(HDRP(bp), PACK(size,0));
   PUT(FTRP(bp), PACK(size,0));
+  //printf("%s\n", __func__);
   coalesce(bp);
 }
 
 /*
 mm_realloc - Implemented simply in terms of mm_malloc and mm_free
 */
-/*
+
 void *mm_realloc(void *ptr, size_t size)
 {
   void *oldptr = ptr;
@@ -270,42 +284,31 @@ void *mm_realloc(void *ptr, size_t size)
   size_t copySize;
 
   newptr = mm_malloc(size);
-  if (newptr == NULL)
-  return NULL;
+  if (newptr == NULL){
+    return NULL;
+  }
+  if(size == 0){
+    mm_free(ptr);
+    return newptr;
+  }
   copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
   if (size < copySize)
   copySize = size;
   memcpy(newptr, oldptr, copySize);
   mm_free(oldptr);
   return newptr;
-}*/
-void *mm_realloc(void *ptr, size_t size)
-{
-  void* oldptr = ptr;
-  void* newptr = mm_malloc(size);
-  if(newptr == NULL){
-    return mm_malloc(size);
-  }
-  if(size == 0){
-    mm_free(ptr);
-    return;
-  }
-  size_t copySize = *(size_t *)((char *) oldptr - SIZE_T_SIZE);
-  if(size < copySize){
-    copySize = size;
-  }
-  memcpy(newptr, oldptr, copySize);
-  mm_free(oldptr);
-  return newptr;
 }
 
 
-void mm_check(){};
+void m_check(void *bp){
+     if (bp > mem_heap_hi())
+         printf("Found:");
+};
 
 
 
 /* FAKE CHECKER */
-
+/*
 static void print_block(void *bp) {
     printf("\tp: %p; ", bp);
     printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
@@ -330,6 +333,7 @@ static void print_block(void *bp) {
     }
     printf("heap-end\n");
 }
+*/
 //void mm_check(){};
 /*
 void mm_check(void)
