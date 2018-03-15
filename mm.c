@@ -98,6 +98,19 @@ static void *coalesce(void *bp)
   return bp;
 }
 
+void *mem_sbrk(int incr)
+{
+  char *old_brk = mem_brk;
+
+  if((incr < 0) || ((mem_brk + incr) > mem_max_addr)){
+    errno = ENOMEM;
+    fprintf(stderr, "ERROR: mem_sbrk failed. Ran out of memory...\n");
+    return (void *)-1;
+  }
+  mem_brk += incr;
+  return (void *)old_brk;
+}
+
 static void *extend_heap(size_t words)
 {
   char *bp;
