@@ -210,7 +210,6 @@ int mm_init(void)
     return -1;
   }
   //print_heap();
-  printf("initialization happens \n");
   return 0;
 }
 
@@ -291,15 +290,22 @@ void *mm_realloc(void *ptr, size_t size)
   void *newptr;
   size_t copySize;
 
-  newptr = mm_malloc(size);
-  if (newptr == NULL){
-    return NULL;
-  }
+/* if size is 0, return NULL */
   if(size == 0){
     mm_free(ptr);
-    return newptr;
+    return 0;
   }
-  copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+
+  if (ptr == NULL) {
+    return mm_malloc(size);
+  }
+
+  newptr = mm_malloc(size);
+  if (!newptr) {
+    return 0;
+  }
+
+  copySize = GET_SIZE(HDRP(ptr));
   if (size < copySize)
   copySize = size;
   memcpy(newptr, oldptr, copySize);
