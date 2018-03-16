@@ -68,9 +68,12 @@ static char *free_listp; // Points to free list
 #define ALIGNMENT 8
 
 /* compute address of next and prev free blocks */
-#define NEXT_FREEBLK(bp) ((char *)(bp) + DSIZE)
-#define PREV_FREEBLK(bp) ((char *)(bp) + 2*DSIZE)
+#define NEXT_FREEBLK(bp) (*(char **)((char *)(bp) + DSIZE))
+#define PREV_FREEBLK(bp) (*(char **)((char *)(bp)))
 
+
+#define SET_NEXT_PTR(bp) ((char *)(bp) + DSIZE)
+#define SET_PREV_PTR(bp) (char *)(bp)
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
@@ -83,20 +86,32 @@ static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
 
 /* add/remove from free list */
-static void add_freeblk(void *bp);
+static void add_freeblk(char *bp);
 static void rmv_freeblk(void *bp);
 
 
 
-static void add_freeblk(void *bp){
+static void add_freeblk(char *bp){
   //(void *) copy = free_listp;
   /*PREV_FREEBLK(free_listp) = bp;
   NEXT_FREEBLK(bp) = free_listp;
   PREV_FREEBLK(bp) = NULL;*/
+  /*
   NEXT_FREEBLK(bp) = free_listp;
   PREV_FREEBLK(bp) = NULL;
   PREV_FREEBLK(free_listp) = bp;
+  free_listp = bp;*/
+  char *copy = HDRP(bp);
+  bp = SET_PREV_PTR(bp);
+  NEXT_FREEBLK(bp) = free_listp;
+  PREV_FREEBLK(bp) = NULL;
+  if(free_listp != NULL){
+    PREV_FREEBLK(free_listp) = bp;
+  }
   free_listp = bp;
+  if(HDRP(bp) != copy){
+    printf("FUCK");
+  }
 }
 
 static void rmv_freeblk(void *bp){
@@ -104,21 +119,32 @@ static void rmv_freeblk(void *bp){
   if(GET_ALLOC(HDRP(bp)) == 1){
     printf("BAD RMV CALL");
   }
-  if(PREV_FREEBLK(bp) == NULL){
+  // remove first block
+  if((PREV_FREEBLK(bp) == NULL) && (NEXT_FREEBLK(bp))) {
     free_listp = NEXT_FREEBLK(bp);
     PREV_FREEBLK(NEXT_FREEBLK(bp)) = NULL;
   }
-  else {
+  // remove only block in the list
+  else if((PREV_FREEBLK(bp) == NULL) && (NEXT_FREEBLK(bp) == NULL)){
+    free_listp = NULL;
+  }
+  // remove last block
+  else if((PREV_FREEBLK(bp)) && (NEXT_FREEBLK(bp) == NULL)){
+    NEXT_FREEBLK(PREV_FREEBLK(bp)) = NULL;
+  }
+  // remove block in middle
+  else if((PREV_FREEBLK(bp)) && (NEXT_FREEBLK(bp))) {
     PREV_FREEBLK(NEXT_FREEBLK(bp)) = PREV_FREEBLK(bp);
     NEXT_FREEBLK(PREV_FREEBLK(bp)) = NEXT_FREEBLK(bp);
   }
 }
 
 
+
 static void *find_fit(size_t asize){ //first fit, BAD
   void *bp;
   //JOSE: CHANGING CONDITIONAL
-  for (bp = heap_listp; bp != NULL; bp = NEXT_FREEBLK(bp)){
+  for (bp = free_listp; bp != NULL; bp = NEXT_FREEBLK(bp)){
     if(GET_SIZE(HDRP(bp)) >= asize){
       return HDRP(bp);
     }
@@ -157,6 +183,9 @@ return NULL;
 static void place(void *bp, size_t asize){
   size_t csize = GET_SIZE(HDRP(bp));
   if((csize - asize) >= (2*DSIZE)){
+    if(GET_ALLOC(HDRP(bp)) == 0){
+      rmv_freeblk(bp);
+    }
     PUT(HDRP(bp), PACK(asize,1));
     PUT(FTRP(bp), PACK(asize,1));
     bp = NEXT_BLKP(bp);
@@ -164,6 +193,9 @@ static void place(void *bp, size_t asize){
     PUT(FTRP(bp), PACK(csize-asize, 0));
   }
   else {
+    if(GET_ALLOC(HDRP(bp)) == 0){
+      rmv_freeblk(bp);
+    }
     PUT(HDRP(bp), PACK(csize, 1));
     PUT(FTRP(bp), PACK(csize, 1));
   }
@@ -200,8 +232,9 @@ static void *coalesce(void *bp)
     rmv_freeblk(PREV_BLKP(bp));
     rmv_freeblk(NEXT_BLKP(bp));
     bp = PREV_BLKP(bp);
-    add_freeblk(bp);
+     // chloe has this below, above return
   }
+  add_freeblk(bp);
   return bp;
 }
 /*
@@ -225,15 +258,16 @@ static void *extend_heap(size_t words)
 
   //Allocate even number of words for ALIGNMENT
   size = (words % 2) ? ((words+1) * WSIZE) : (words * WSIZE);
+  size = MAX(size, 24);
   if((long)(bp = mem_sbrk(size)) == -1){
     return NULL;
   }
   PUT(HDRP(bp), PACK(size, 0)); //Free block header
   PUT(FTRP(bp), PACK(size,0)); //free block footer
   PUT(HDRP(NEXT_BLKP(bp)), PACK(0,1)); //new epilogue header
-
+  add_freeblk(bp);
   //Coalesce if previous block was Free
-  return coalesce(bp);
+  return SET_PREV_PTR(coalesce(bp));
 }
 /* single word (4) or double word (8) alignment */
 
@@ -246,6 +280,7 @@ int mm_init(void)
 {
   //create initial empty heap
   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1){
+    printf("HERE???");
     return -1;
   }
 
@@ -254,6 +289,7 @@ int mm_init(void)
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer
   PUT(heap_listp + (3*WSIZE), PACK(0,1)); //Prologue header
   heap_listp += (2*WSIZE);
+  free_listp = NULL;
   //free_listp = (heap_listp + DSIZE);
   //Extend empty heap with CHUNKSIZE bytes
   if((free_listp = extend_heap(CHUNKSIZE/WSIZE)) == NULL){ // ???
@@ -288,10 +324,10 @@ void *mm_malloc(size_t size)
 
   /* adjust block size to include overhead and alignment range */
   if (size <= DSIZE){
-    asize = 2*DSIZE;
+    asize = 4*DSIZE;
   }
   else{
-    asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
+    asize = MAX(DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE), 4*DSIZE);
   }
 
   /* search the free list for a fit */
@@ -309,7 +345,6 @@ void *mm_malloc(size_t size)
   }
   place(bp, asize);
   return bp;
-
 }
 
 /*
@@ -323,19 +358,27 @@ void mm_free(void *bp)
   size_t size = GET_SIZE(HDRP(bp));
 
   if (heap_listp == 0){
-    mm_init();
-  }
+  mm_init();
+}
 
-  PUT(HDRP(bp), PACK(size,0));
-  PUT(FTRP(bp), PACK(size,0));
-  //printf("%s\n", __func__);
-  coalesce(bp);*/
-  void *oldfree = free_listp;
-  free_listp = bp;
-  NEXT_FREEBLK(free_listp) = oldfree;
-  PUT(HDRP(bp), PACK(size,0));
-  PUT(FTRP(bp), PACK(size,0));
-  coalesce(bp);
+PUT(HDRP(bp), PACK(size,0));
+PUT(FTRP(bp), PACK(size,0));
+//printf("%s\n", __func__);
+coalesce(bp);*/
+if(bp == 0)
+return;
+
+void *oldfree = free_listp;
+free_listp = bp;
+size_t size = GET_SIZE(HDRP(bp));
+
+
+
+NEXT_FREEBLK(free_listp) = oldfree;
+PUT(HDRP(bp), PACK(size,0));
+PUT(FTRP(bp), PACK(size,0));
+coalesce(bp);
+print_heap(heap_listp);
 }
 
 /*
@@ -380,7 +423,7 @@ printf("Found:");
 
 
 /* FAKE CHECKER */
-/*
+
 static void print_block(void *bp) {
 printf("\tp: %p; ", bp);
 printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
@@ -405,9 +448,13 @@ print_block(bp);
 }
 printf("heap-end\n");
 }
-*/
+
 //void mm_check(){};
 /*
+/ASK: What should we do?
+MOST IMPORTANT: IS THE BASIC CONCEPT OK
+All linked lists connected?
+How do we align?
 void mm_check(void)
 {
 void *iterator = mem_heap_lo();
