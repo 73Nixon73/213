@@ -68,8 +68,8 @@ static char *free_listp; // Points to free list
 #define ALIGNMENT 8
 
 /* compute address of next and prev free blocks */
-#define NEXT_FREEBLK(bp) (*(void **)(bp + DSIZE))
-#define PREV_FREEBLK(bp) (*(void **)(bp))
+#define NEXT_FREEBLK(bp) ((char *)(bp) + DSIZE)
+#define PREV_FREEBLK(bp) ((char *)(bp) + 2*DSIZE)
 
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
@@ -89,31 +89,38 @@ static void rmv_freeblk(void *bp);
 
 
 static void add_freeblk(void *bp){
-  PREV_FREEBLK(heap_listp) = bp;
-  NEXT_FREEBLK(bp) = heap_listp;
+  //(void *) copy = free_listp;
+  /*PREV_FREEBLK(free_listp) = bp;
+  NEXT_FREEBLK(bp) = free_listp;
+  PREV_FREEBLK(bp) = NULL;*/
+  NEXT_FREEBLK(bp) = free_listp;
   PREV_FREEBLK(bp) = NULL;
-  bp = heaplist_p;
+  PREV_FREEBLK(free_listp) = bp;
+  free_listp = bp;
 }
 
 static void rmv_freeblk(void *bp){
   // if at the front of the free list
+  if(GET_ALLOC(HDRP(bp)) == 1){
+    printf("BAD RMV CALL");
+  }
   if(PREV_FREEBLK(bp) == NULL){
-  PREV_FREEBLK(NEXT_FREEBLK(bp)) = NULL;
-}
-else {
-  PREV_FREEBLK(NEXT_FREEBLK(bp)) = PREV_FREEBLK(bp);
-  NEXT_FREEBLK(PREV_FREEBLK(bp)) = NEXT_FREEBLK(bp);
-}
-
+    free_listp = NEXT_FREEBLK(bp);
+    PREV_FREEBLK(NEXT_FREEBLK(bp)) = NULL;
+  }
+  else {
+    PREV_FREEBLK(NEXT_FREEBLK(bp)) = PREV_FREEBLK(bp);
+    NEXT_FREEBLK(PREV_FREEBLK(bp)) = NEXT_FREEBLK(bp);
+  }
 }
 
 
 static void *find_fit(size_t asize){ //first fit, BAD
   void *bp;
-
-  for (bp = heap_listp; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEBLK(bp)){
+  //JOSE: CHANGING CONDITIONAL
+  for (bp = heap_listp; bp != NULL; bp = NEXT_FREEBLK(bp)){
     if(GET_SIZE(HDRP(bp)) >= asize){
-      return bp;
+      return HDRP(bp);
     }
   }
   return NULL;
@@ -121,29 +128,29 @@ static void *find_fit(size_t asize){ //first fit, BAD
 
 /*
 static void *find_fit(size_t asize){
-  void *bp;
-  char *minbp;
-  size_t min_size = GET_SIZE(HDRP(bp));
+void *bp;
+char *minbp;
+size_t min_size = GET_SIZE(HDRP(bp));
 
 // if they're equal, return
 for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-  if(!GET_ALLOC(HDRP(bp)) && (asize == GET_SIZE(HDRP(bp)))){
-    return bp;
+if(!GET_ALLOC(HDRP(bp)) && (asize == GET_SIZE(HDRP(bp)))){
+return bp;
 }
 // if not equal, find the smallest spot
-  if(!GET_ALLOC(HDRP(bp)) && (asize < GET_SIZE(HDRP(bp)))){
-    if (min_size > GET_SIZE(HDRP(bp))) {
-      min_size = GET_SIZE(HDRP(bp));
-      *minbp = bp;
-    }
-  }
+if(!GET_ALLOC(HDRP(bp)) && (asize < GET_SIZE(HDRP(bp)))){
+if (min_size > GET_SIZE(HDRP(bp))) {
+min_size = GET_SIZE(HDRP(bp));
+*minbp = bp;
 }
-  if(min_size != GET_SIZE(HDRP(bp))){
-    *(char *)bp = *minbp;
-    return bp;
-  }
+}
+}
+if(min_size != GET_SIZE(HDRP(bp))){
+*(char *)bp = *minbp;
+return bp;
+}
 
-    return NULL;
+return NULL;
 }
 */
 
@@ -191,14 +198,10 @@ static void *coalesce(void *bp)
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
     rmv_freeblk(PREV_BLKP(bp));
-    rmv_freeblk(NEXT_BLKP(bp))
+    rmv_freeblk(NEXT_BLKP(bp));
     bp = PREV_BLKP(bp);
     add_freeblk(bp);
   }
-  if (bp > mem_heap_hi()){
-      printf("Found:");
-      printf("%s\n", __func__);
-    }
   return bp;
 }
 /*
@@ -251,14 +254,14 @@ int mm_init(void)
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer
   PUT(heap_listp + (3*WSIZE), PACK(0,1)); //Prologue header
   heap_listp += (2*WSIZE);
-  free_listp = (heaplist_p + DSIZE);
+  //free_listp = (heap_listp + DSIZE);
   //Extend empty heap with CHUNKSIZE bytes
-  if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
+  if((free_listp = extend_heap(CHUNKSIZE/WSIZE)) == NULL){ // ???
     printf("initialization fails \n");
     return -1;
   }
   //print_heap();
-  printf("initialization happens \n");
+
   return 0;
 }
 
@@ -293,14 +296,14 @@ void *mm_malloc(size_t size)
 
   /* search the free list for a fit */
   bp = find_fit(asize);
-  if ((bp) != NULL) {
+  if (bp != NULL) {
     place(bp, asize);
     return bp;
   }
 
   /* no fit found. get more memory and place the block */
   extendsize = MAX(asize, CHUNKSIZE);
-  bp = extend_heap(extendsize/WSIZE);
+  bp = (extend_heap(extendsize/WSIZE));
   if (bp == NULL){
     return NULL;
   }
@@ -314,8 +317,8 @@ void *mm_malloc(size_t size)
 */
 void mm_free(void *bp)
 {
-  if(bp == 0)
-    return;
+  /*if(bp == 0)
+  return;
 
   size_t size = GET_SIZE(HDRP(bp));
 
@@ -326,6 +329,12 @@ void mm_free(void *bp)
   PUT(HDRP(bp), PACK(size,0));
   PUT(FTRP(bp), PACK(size,0));
   //printf("%s\n", __func__);
+  coalesce(bp);*/
+  void *oldfree = free_listp;
+  free_listp = bp;
+  NEXT_FREEBLK(free_listp) = oldfree;
+  PUT(HDRP(bp), PACK(size,0));
+  PUT(FTRP(bp), PACK(size,0));
   coalesce(bp);
 }
 
@@ -339,7 +348,7 @@ void *mm_realloc(void *ptr, size_t size)
   void *newptr;
   size_t copySize;
 
-/* if size is 0, return NULL */
+  /* if size is 0, return NULL */
   if(size == 0){
     mm_free(ptr);
     return 0;
@@ -364,8 +373,8 @@ void *mm_realloc(void *ptr, size_t size)
 
 /*
 void m_check(void *bp){
-     if (bp > mem_heap_hi())
-         printf("Found:");
+if (bp > mem_heap_hi())
+printf("Found:");
 };
 */
 
@@ -373,76 +382,76 @@ void m_check(void *bp){
 /* FAKE CHECKER */
 /*
 static void print_block(void *bp) {
-    printf("\tp: %p; ", bp);
-    printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
-    printf("hsize: %d; ", GET_SIZE(HDRP(bp)));
-    printf("fsize: %d; ", GET_SIZE(FTRP(bp)));
-    printf("pred: %p, succ: %p\n", (void *) GET(PREV_BLKP(bp)), (void *) GET(NEXT_BLKP(bp)));
+printf("\tp: %p; ", bp);
+printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
+printf("hsize: %d; ", GET_SIZE(HDRP(bp)));
+printf("fsize: %d; ", GET_SIZE(FTRP(bp)));
+printf("pred: %p, succ: %p\n", (void *) GET(PREV_BLKP(bp)), (void *) GET(NEXT_BLKP(bp)));
 }
 
- void check_block(void *bp) {
-    if (GET_SIZE(HDRP(bp)) % DSIZE)
-        printf("\terror: not doubly aligned\n");
-    if (GET(HDRP(bp)) != GET(FTRP(bp)))
-        printf("\terror: header & foot do not match\n");
+void check_block(void *bp) {
+if (GET_SIZE(HDRP(bp)) % DSIZE)
+printf("\terror: not doubly aligned\n");
+if (GET(HDRP(bp)) != GET(FTRP(bp)))
+printf("\terror: header & foot do not match\n");
 }
 
- void print_heap() {
-    printf("heap\n");
-    void *bp;
-    for (bp = heap_listp+DSIZE; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-        check_block(bp);
-        print_block(bp);
-    }
-    printf("heap-end\n");
+void print_heap() {
+printf("heap\n");
+void *bp;
+for (bp = heap_listp+DSIZE; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+check_block(bp);
+print_block(bp);
+}
+printf("heap-end\n");
 }
 */
 //void mm_check(){};
 /*
 void mm_check(void)
 {
-  void *iterator = mem_heap_lo();
-  while (iterator != mem_heap_hi()){
-    //What happens whenever we find an allocated block
-    if(GET_ALLOC(iterator) == 1){
-      iterator = FTRP(iterator);
+void *iterator = mem_heap_lo();
+while (iterator != mem_heap_hi()){
+//What happens whenever we find an allocated block
+if(GET_ALLOC(iterator) == 1){
+iterator = FTRP(iterator);
 
-      if(GET_ALLOC(iterator) != 1){
-        printf("Error: Footer and header unequal");
-        printf("%s\n", __func__);
-        return;
-      }
-      if(iterator > mem_heap_hi()){
-        printf("Error: Max Memory exceeded");
-        printf("%s\n", __func__);
-        return;
-      }
-      iterator += 4;
-    }
+if(GET_ALLOC(iterator) != 1){
+printf("Error: Footer and header unequal");
+printf("%s\n", __func__);
+return;
+}
+if(iterator > mem_heap_hi()){
+printf("Error: Max Memory exceeded");
+printf("%s\n", __func__);
+return;
+}
+iterator += 4;
+}
 
-    if(GET_ALLOC(iterator) == 0){
-      iterator = FTRP(iterator);
-      if(GET_ALLOC(iterator) != 0){
-        printf("Error: Footer and header unequal");
-        printf("%s\n", __func__);
-        return;
-      }
-      if(GET_ALLOC(PREV_BLKP(iterator) == 0 ||
-      GET_ALLOC(NEXT_BLKP(iterator)) == 0){
-        printf("Error: Coalesce failed");
-        printf("%s\n", __func__);
-        return;
-      }
-      if(iterator > mem_heap_hi()){
-        printf("Error: Max Memory exceeded");
-        printf("%s\n", __func__);
-        return;
-      }
-      iterator += 4;
-    }
-  }
-  printf("all good");
-  printf("%s\n", __func__);
+if(GET_ALLOC(iterator) == 0){
+iterator = FTRP(iterator);
+if(GET_ALLOC(iterator) != 0){
+printf("Error: Footer and header unequal");
+printf("%s\n", __func__);
+return;
+}
+if(GET_ALLOC(PREV_BLKP(iterator) == 0 ||
+GET_ALLOC(NEXT_BLKP(iterator)) == 0){
+printf("Error: Coalesce failed");
+printf("%s\n", __func__);
+return;
+}
+if(iterator > mem_heap_hi()){
+printf("Error: Max Memory exceeded");
+printf("%s\n", __func__);
+return;
+}
+iterator += 4;
+}
+}
+printf("all good");
+printf("%s\n", __func__);
 
 }
 */
