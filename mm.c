@@ -38,6 +38,7 @@ team_t team = {
 };
 
 static char *heap_listp; //Points to Prologue block
+static char *free_listp; // Points to free list
 
 /* basic constants and macros*/
 #define WSIZE 4   /* word header/footer size (bytes) */
@@ -66,6 +67,10 @@ static char *heap_listp; //Points to Prologue block
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 #define ALIGNMENT 8
 
+/* compute address of next and prev free blocks */
+#define NEXT_FREEBLK(bp) (*(void **)(bp + DSIZE))
+#define PREV_FREEBLK(bp) (*(void **)(bp))
+
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
@@ -77,34 +82,70 @@ static void place(void *bp, size_t asize);
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
 
+/* add/remove from free list */
+static void add_freeblk(void *bp);
+static void rmv_freeblk(void *bp);
+
+
+
+static void add_freeblk(void *bp){
+  PREV_FREEBLK(heap_listp) = bp;
+  NEXT_FREEBLK(bp) = heap_listp;
+  PREV_FREEBLK(bp) = NULL;
+  bp = heaplist_p;
+}
+
+static void rmv_freeblk(void *bp){
+  // if at the front of the free list
+  if(PREV_FREEBLK(bp) == NULL){
+  PREV_FREEBLK(NEXT_FREEBLK(bp)) = NULL;
+}
+else {
+  PREV_FREEBLK(NEXT_FREEBLK(bp)) = PREV_FREEBLK(bp);
+  NEXT_FREEBLK(PREV_FREEBLK(bp)) = NEXT_FREEBLK(bp);
+}
+
+}
+
 
 static void *find_fit(size_t asize){ //first fit, BAD
   void *bp;
 
-  for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-    if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
+  for (bp = heap_listp; GET_ALLOC(HDRP(bp)) == 0; bp = NEXT_FREEBLK(bp)){
+    if(GET_SIZE(HDRP(bp)) >= asize){
       return bp;
     }
   }
   return NULL;
 }
+
 /*
-static void *find_best_fit(size_t asize){
-void *bp;
+static void *find_fit(size_t asize){
+  void *bp;
+  char *minbp;
+  size_t min_size = GET_SIZE(HDRP(bp));
 
-
+// if they're equal, return
 for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-if(!GET_ALLOC(HDRP(bp)) && (asize == GET_SIZE(HDRP(bp)))){
-return bp;
+  if(!GET_ALLOC(HDRP(bp)) && (asize == GET_SIZE(HDRP(bp)))){
+    return bp;
 }
-else {
+// if not equal, find the smallest spot
+  if(!GET_ALLOC(HDRP(bp)) && (asize < GET_SIZE(HDRP(bp)))){
+    if (min_size > GET_SIZE(HDRP(bp))) {
+      min_size = GET_SIZE(HDRP(bp));
+      *minbp = bp;
+    }
+  }
+}
+  if(min_size != GET_SIZE(HDRP(bp))){
+    *(char *)bp = *minbp;
+    return bp;
+  }
 
+    return NULL;
 }
-}
-}
-
 */
-\
 
 static void place(void *bp, size_t asize){
   size_t csize = GET_SIZE(HDRP(bp));
@@ -135,11 +176,13 @@ static void *coalesce(void *bp)
     size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
+    rmv_freeblk(NEXT_BLKP(bp));
   }
   else if (!prev_alloc && next_alloc){
     size += GET_SIZE(HDRP(PREV_BLKP(bp)));
     PUT(FTRP(bp), PACK(size,0));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
+    rmv_freeblk(bp);
     bp = PREV_BLKP(bp);
   }
 
@@ -147,7 +190,10 @@ static void *coalesce(void *bp)
     size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+    rmv_freeblk(PREV_BLKP(bp));
+    rmv_freeblk(NEXT_BLKP(bp))
     bp = PREV_BLKP(bp);
+    add_freeblk(bp);
   }
   if (bp > mem_heap_hi()){
       printf("Found:");
@@ -199,17 +245,20 @@ int mm_init(void)
   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1){
     return -1;
   }
+
   PUT(heap_listp, 0); //alignment padding
-  PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); //Prologue padding
+  PUT(heap_listp + WSIZE, PACK(DSIZE, 1)); //Prologue padding
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer
   PUT(heap_listp + (3*WSIZE), PACK(0,1)); //Prologue header
   heap_listp += (2*WSIZE);
+  free_listp = (heaplist_p + DSIZE);
   //Extend empty heap with CHUNKSIZE bytes
   if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
     printf("initialization fails \n");
     return -1;
   }
   //print_heap();
+  printf("initialization happens \n");
   return 0;
 }
 
