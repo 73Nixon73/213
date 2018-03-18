@@ -297,7 +297,7 @@ int mm_init(void)
     return -1;
   }
   //print_heap();
-
+  print_heap();
   return 0;
 }
 
@@ -429,7 +429,7 @@ printf("\tp: %p; ", bp);
 printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
 printf("hsize: %d; ", GET_SIZE(HDRP(bp)));
 printf("fsize: %d; ", GET_SIZE(FTRP(bp)));
-printf("pred: %p, succ: %p\n", (void *) GET(PREV_BLKP(bp)), (void *) GET(NEXT_BLKP(bp)));
+printf("pred: %p, succ: %p\n", (void *) (PREV_FREEBLK(bp)), (void *) (NEXT_FREEBLK(bp)));
 }
 
 void check_block(void *bp) {
