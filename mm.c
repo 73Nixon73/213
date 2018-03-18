@@ -1,4 +1,21 @@
 /*
+This allocator uses an implicit free list to allocate memory in the heap.
+
+In this approach, each block has a header and footer describing its size and
+whether it is allocated ot free. Aside from this, blocks only have payloads
+if they are allocated or reassignable junk data if they are not.
+
+A block is allocated by searching through the heap for the smallest free block
+large enough to fit the requested size payload, then allocating the payload
+to that block. If the block is too big, then the leftover data is reassigned
+as a free block. If no free blocks of an adequate size are available, the
+heap is simply grown by an amount large enough to hold the requested data size,
+and that new area is used to allocate the data.
+Blocks are freed by changing their header and footer to describe them as free
+blocks. This allows the malloc function to use them to assign memory. In
+addition, if a block is freed alongside another block, they are joined together
+as one larger free block, so as to be able to fit larger blocks of memory.
+
 * mm-naive.c - The fastest, least memory-efficient malloc package.
 *
 * In this naive approach, a block is allocated by simply incrementing
@@ -24,6 +41,7 @@
 * provide your team information in the following struct.
 ********************************************************/
 
+
 team_t team = {
   /* Team name */
   "Group 6",
@@ -38,7 +56,6 @@ team_t team = {
 };
 
 static char *heap_listp; //Points to Prologue block
-static char *free_listp; // Points to free list
 
 /* basic constants and macros*/
 #define WSIZE 4   /* word header/footer size (bytes) */
@@ -67,13 +84,8 @@ static char *free_listp; // Points to free list
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 #define ALIGNMENT 8
 
-/* compute address of next and prev free blocks */
-#define NEXT_FREEBLK(bp) (*(char **)((char *)(bp) + DSIZE))
-#define PREV_FREEBLK(bp) (*(char **)((char *)(bp)))
+#define ALIGNMENT_CHECK(p)  ((((unsigned int)(p)) % ALIGNMENT) == 0)
 
-
-#define SET_NEXT_PTR(bp) ((char *)(bp) + DSIZE)
-#define SET_PREV_PTR(bp) (char *)(bp)
 /* rounds up to the nearest multiple of ALIGNMENT */
 #define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
 
@@ -84,173 +96,98 @@ static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
+static int mm_check_block(void *bp, int iterator);
+static void cheese();
+int mm_check();
 
-/* add/remove from free list */
-static void add_freeblk(char *bp);
-static void rmv_freeblk(void *bp);
-
-
-
-static void add_freeblk(char *bp){
-  //(void *) copy = free_listp;
-  /*PREV_FREEBLK(free_listp) = bp;
-  NEXT_FREEBLK(bp) = free_listp;
-  PREV_FREEBLK(bp) = NULL;*/
-  /*
-  NEXT_FREEBLK(bp) = free_listp;
-  PREV_FREEBLK(bp) = NULL;
-  PREV_FREEBLK(free_listp) = bp;
-  free_listp = bp;*/
-  char *copy = HDRP(bp);
-  bp = SET_PREV_PTR(bp);
-  NEXT_FREEBLK(bp) = free_listp;
-  PREV_FREEBLK(bp) = NULL;
-  if(free_listp != NULL){
-    PREV_FREEBLK(free_listp) = bp;
-  }
-  free_listp = bp;
-  if(HDRP(bp) != copy){
-    printf("FUCK");
-  }
-}
-
-static void rmv_freeblk(void *bp){
-  // if at the front of the free list
-  if(GET_ALLOC(HDRP(bp)) == 1){
-    printf("BAD RMV CALL");
-  }
-  // remove first block
-  if((PREV_FREEBLK(bp) == NULL) && (NEXT_FREEBLK(bp))) {
-    free_listp = NEXT_FREEBLK(bp);
-    PREV_FREEBLK(NEXT_FREEBLK(bp)) = NULL;
-  }
-  // remove only block in the list
-  else if((PREV_FREEBLK(bp) == NULL) && (NEXT_FREEBLK(bp) == NULL)){
-    free_listp = NULL;
-  }
-  // remove last block
-  else if((PREV_FREEBLK(bp)) && (NEXT_FREEBLK(bp) == NULL)){
-    NEXT_FREEBLK(PREV_FREEBLK(bp)) = NULL;
-  }
-  // remove block in middle
-  else if((PREV_FREEBLK(bp)) && (NEXT_FREEBLK(bp))) {
-    PREV_FREEBLK(NEXT_FREEBLK(bp)) = PREV_FREEBLK(bp);
-    NEXT_FREEBLK(PREV_FREEBLK(bp)) = NEXT_FREEBLK(bp);
-  }
-}
-
-
-
+//Searches for the smallest possible block to satisfy a malloc call
 static void *find_fit(size_t asize){ //first fit, BAD
   void *bp;
-  //JOSE: CHANGING CONDITIONAL
-  for (bp = free_listp; bp != NULL; bp = NEXT_FREEBLK(bp)){
-    if(GET_SIZE(HDRP(bp)) >= asize){
-      return HDRP(bp);
+  void *tiny = NULL;
+  //Searches for the first free block that can satisfy the allocation
+  for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
+    if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))){
+      tiny = bp;
+      break;
     }
   }
-  return NULL;
+  //Searches for blocks that could still satisfy the allocation while being
+  //smaller
+  while(GET_SIZE(HDRP(bp)) != 0){
+    if(!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))
+       && GET_SIZE(HDRP(bp)) < GET_SIZE(HDRP(tiny))){
+         tiny = bp;
+       }
+     bp = NEXT_BLKP(bp);
+  }
+  //Returns the found block, or null if none are appropriate
+  return tiny;
 }
 
 /*
-static void *find_fit(size_t asize){
-void *bp;
-char *minbp;
-size_t min_size = GET_SIZE(HDRP(bp));
-
-// if they're equal, return
-for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)){
-if(!GET_ALLOC(HDRP(bp)) && (asize == GET_SIZE(HDRP(bp)))){
-return bp;
-}
-// if not equal, find the smallest spot
-if(!GET_ALLOC(HDRP(bp)) && (asize < GET_SIZE(HDRP(bp)))){
-if (min_size > GET_SIZE(HDRP(bp))) {
-min_size = GET_SIZE(HDRP(bp));
-*minbp = bp;
-}
-}
-}
-if(min_size != GET_SIZE(HDRP(bp))){
-*(char *)bp = *minbp;
-return bp;
-}
-
-return NULL;
-}
+Place is used to allocate blocks by malloc. It first ensures that the allocated
+block isn't using more memory than it has to, splitting it into two if it is.
+It then allocates the block with the needed memory, and, if applicable,
+makes the remainder into a free block that can still be used.
 */
-
 static void place(void *bp, size_t asize){
   size_t csize = GET_SIZE(HDRP(bp));
+  //Checks whether all of the free block is needed for allocation
   if((csize - asize) >= (2*DSIZE)){
-    if(GET_ALLOC(HDRP(bp)) == 0){
-      rmv_freeblk(bp);
-    }
+    //allocates the block
     PUT(HDRP(bp), PACK(asize,1));
     PUT(FTRP(bp), PACK(asize,1));
+    //frees the remainder for other use
     bp = NEXT_BLKP(bp);
     PUT(HDRP(bp), PACK(csize-asize, 0));
     PUT(FTRP(bp), PACK(csize-asize, 0));
   }
+  //If all the memory is needed, uses it all
   else {
-    if(GET_ALLOC(HDRP(bp)) == 0){
-      rmv_freeblk(bp);
-    }
     PUT(HDRP(bp), PACK(csize, 1));
     PUT(FTRP(bp), PACK(csize, 1));
   }
 }
 
+/*
+Coalesce is used to ensure that the memory is available in the largest
+blocks possible. It is used whenever a free block is created, and checks
+whether adjacent blocks are free. If they are, it merges them with the newly
+freed block to make a bigger free block.
+*/
 static void *coalesce(void *bp)
 {
+  //retrieve data
   size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
   size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
   size_t size = GET_SIZE(HDRP(bp));
-
+  //If both neighboring blocks are allocated, does nothing
   if(prev_alloc && next_alloc){
     return bp;
   }
-
+ //If only the following block is free, merges with it
   else if (prev_alloc && !next_alloc){
     size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
     PUT(HDRP(bp), PACK(size,0));
     PUT(FTRP(bp), PACK(size,0));
-    rmv_freeblk(NEXT_BLKP(bp));
   }
+  //If only the previous block is free, merges with it
   else if (!prev_alloc && next_alloc){
     size += GET_SIZE(HDRP(PREV_BLKP(bp)));
     PUT(FTRP(bp), PACK(size,0));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
-    rmv_freeblk(bp);
     bp = PREV_BLKP(bp);
   }
-
+  //if both previous blocks are free, merges with both.
   else{
     size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
     PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
     PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-    rmv_freeblk(PREV_BLKP(bp));
-    rmv_freeblk(NEXT_BLKP(bp));
     bp = PREV_BLKP(bp);
-     // chloe has this below, above return
   }
-  add_freeblk(bp);
   return bp;
 }
-/*
-void *mem_sbrk(int incr)
-{
-char *old_brk = mem_brk;
 
-if((incr < 0) || ((mem_brk + incr) > mem_heap_hi())){
-errno = ENOMEM;
-fprintf(stderr, "ERROR: mem_sbrk failed. Ran out of memory...\n");
-return (void *)-1;
-}
-mem_brk += incr;
-return (void *)old_brk;
-}
-*/
 static void *extend_heap(size_t words)
 {
   char *bp;
@@ -258,16 +195,15 @@ static void *extend_heap(size_t words)
 
   //Allocate even number of words for ALIGNMENT
   size = (words % 2) ? ((words+1) * WSIZE) : (words * WSIZE);
-  size = MAX(size, 24);
   if((long)(bp = mem_sbrk(size)) == -1){
     return NULL;
   }
   PUT(HDRP(bp), PACK(size, 0)); //Free block header
   PUT(FTRP(bp), PACK(size,0)); //free block footer
   PUT(HDRP(NEXT_BLKP(bp)), PACK(0,1)); //new epilogue header
-  add_freeblk(bp);
+
   //Coalesce if previous block was Free
-  return SET_PREV_PTR(coalesce(bp));
+  return coalesce(bp);
 }
 /* single word (4) or double word (8) alignment */
 
@@ -280,31 +216,25 @@ int mm_init(void)
 {
   //create initial empty heap
   if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1){
-    printf("HERE???");
     return -1;
   }
-
   PUT(heap_listp, 0); //alignment padding
-  PUT(heap_listp + WSIZE, PACK(DSIZE, 1)); //Prologue padding
+  PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1)); //Prologue padding
   PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); //Prologue footer
   PUT(heap_listp + (3*WSIZE), PACK(0,1)); //Prologue header
   heap_listp += (2*WSIZE);
-  free_listp = NULL;
-  //free_listp = (heap_listp + DSIZE);
   //Extend empty heap with CHUNKSIZE bytes
-  if((free_listp = extend_heap(CHUNKSIZE/WSIZE)) == NULL){ // ???
+  if(extend_heap(CHUNKSIZE/WSIZE) == NULL){
     printf("initialization fails \n");
     return -1;
   }
-  //print_heap();
-  print_heap();
   return 0;
 }
 
 
 /*
-* mm_malloc - Allocate a block by incrementing the brk pointer.
-*     Always allocate a block whose size is a multiple of the alignment.
+* mm_malloc - Allocate a block by searching for an appropriate free block
+with find_fit, or making a new one if none is available using extend_heap
 */
 void *mm_malloc(size_t size)
 {
@@ -312,7 +242,7 @@ void *mm_malloc(size_t size)
   size_t extendsize; /* Amount to extend heap if no fit */
   char *bp;
 
-
+//Initialize heap if not done so yet
   if(heap_listp == 0){
     mm_init();
   }
@@ -324,65 +254,62 @@ void *mm_malloc(size_t size)
 
   /* adjust block size to include overhead and alignment range */
   if (size <= DSIZE){
-    asize = 4*DSIZE;
+    asize = 2*DSIZE;
   }
   else{
-    asize = MAX(DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE), 4*DSIZE);
+    asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
   }
 
   /* search the free list for a fit */
   bp = find_fit(asize);
-  if (bp != NULL) {
+  if ((bp) != NULL) {
     place(bp, asize);
     return bp;
   }
 
   /* no fit found. get more memory and place the block */
   extendsize = MAX(asize, CHUNKSIZE);
-  bp = (extend_heap(extendsize/WSIZE));
+  bp = extend_heap(extendsize/WSIZE);
   if (bp == NULL){
     return NULL;
   }
   place(bp, asize);
+  /* Uncomment to use checker.
+  if(!mm_check){
+    bp = NULL;
+  }
+  */
   return bp;
+
 }
 
 /*
-* mm_free - Freeing a block does nothing.
+* mm_free - Freeing a block will make the block header/footer reflect the
+block's allocation as free, which allows malloc and realloc to use it as memory
 */
 void mm_free(void *bp)
 {
-  /*if(bp == 0)
-  return;
+  if(bp == 0)
+    return;
 
   size_t size = GET_SIZE(HDRP(bp));
 
   if (heap_listp == 0){
-  mm_init();
-}
-
-PUT(HDRP(bp), PACK(size,0));
-PUT(FTRP(bp), PACK(size,0));
-//printf("%s\n", __func__);
-coalesce(bp);*/
-if(bp == 0)
-return;
-
-void *oldfree = free_listp;
-free_listp = bp;
-size_t size = GET_SIZE(HDRP(bp));
-
-
-
-NEXT_FREEBLK(free_listp) = oldfree;
-PUT(HDRP(bp), PACK(size,0));
-PUT(FTRP(bp), PACK(size,0));
-coalesce(bp);
-print_heap(heap_listp);
+    mm_init();
+  }
+//re-label the data as free
+  PUT(HDRP(bp), PACK(size,0));
+  PUT(FTRP(bp), PACK(size,0));
+  //coalesces in case the newly freed data has free data adjacent to it
+  coalesce(bp);
 }
 
 /*
-mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+mm_realloc - Implemented largely in terms of mm_malloc and mm_free
+Allocates the memory requested using mm_malloc, then copies the memory from the
+designated pointed to the malloc-allocated pointer, and frees the original copy
+using mm_free. If no pointer is given, the function simplifies to mm_malloc;
+if no size is given, the function simply frees the given pointer.
 */
 
 void *mm_realloc(void *ptr, size_t size)
@@ -390,22 +317,23 @@ void *mm_realloc(void *ptr, size_t size)
   void *oldptr = ptr;
   void *newptr;
   size_t copySize;
-
-  /* if size is 0, return NULL */
+//If no size is requested, simply frees the original pointer
   if(size == 0){
     mm_free(ptr);
     return 0;
   }
-
+//If the given pointer is null, simply allocates a block of the requested size
   if (ptr == NULL) {
     return mm_malloc(size);
   }
-
+//If no pointer can be allocated for the requested size, returns zero
   newptr = mm_malloc(size);
   if (!newptr) {
     return 0;
   }
-
+//Given a valid pointer and available size, copies the data stored in the
+//area designated by the pointer to the malloc-allocated area, then frees
+//the original copy of the data.
   copySize = GET_SIZE(HDRP(ptr));
   if (size < copySize)
   copySize = size;
@@ -413,92 +341,84 @@ void *mm_realloc(void *ptr, size_t size)
   mm_free(oldptr);
   return newptr;
 }
-
 /*
-void m_check(void *bp){
-if (bp > mem_heap_hi())
-printf("Found:");
-};
+static void cheese(){
+  void *bp = NEXT_BLKP(heap_listp);
+  void *other;
+  while(GET_SIZE(HDRP(bp)) != 0){
+
+    if(GET_ALLOC(HDRP(bp)) == 0){
+      other = HDRP(NEXT_BLKP(bp));
+      while(GET_SIZE(other) != 0){
+        if(GET_ALLOC(other) = 1 && GET_SIZE(HDRP(other) <= GET_SIZE(HDRP(bp)))){
+          mm_realloc(other, GET_SIZE(other));
+        }
+      }
+    }
+  }
+}
 */
-
-
-/* FAKE CHECKER */
-
-static void print_block(void *bp) {
-printf("\tp: %p; ", bp);
-printf("allocated: %s; ", GET_ALLOC(HDRP(bp))? "yes": "no" );
-printf("hsize: %d; ", GET_SIZE(HDRP(bp)));
-printf("fsize: %d; ", GET_SIZE(FTRP(bp)));
-printf("pred: %p, succ: %p\n", (void *) (PREV_FREEBLK(bp)), (void *) (NEXT_FREEBLK(bp)));
-}
-
-void check_block(void *bp) {
-if (GET_SIZE(HDRP(bp)) % DSIZE)
-printf("\terror: not doubly aligned\n");
-if (GET(HDRP(bp)) != GET(FTRP(bp)))
-printf("\terror: header & foot do not match\n");
-}
-
-void print_heap() {
-printf("heap\n");
-void *bp;
-for (bp = heap_listp+DSIZE; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
-check_block(bp);
-print_block(bp);
-}
-printf("heap-end\n");
-}
-
-//void mm_check(){};
 /*
-/ASK: What should we do?
-MOST IMPORTANT: IS THE BASIC CONCEPT OK
-All linked lists connected?
-How do we align?
-void mm_check(void)
+//void mm_check;
+mm_check goes through every block in the heap starting at the heap pointer.
+It checks through every block in the heap by using the NEXT_BLKP sequentially
+through each block, and detecting the beginning and end of the heap using its
+prologue and epilogue, with the unique property that only they have a size of
+zero. In each block, it checks for compliance with our invariants; if any
+fail to comply, the return value is changed to 0, otherwise it returns one.
+The function also prints a full description of our heap block-by-block, which
+is helpful when debugging with small samples such as short1,2-bal.rep.
+*/
+int mm_check(void)
 {
-void *iterator = mem_heap_lo();
-while (iterator != mem_heap_hi()){
-//What happens whenever we find an allocated block
-if(GET_ALLOC(iterator) == 1){
-iterator = FTRP(iterator);
+  void *bp = heap_listp;
+  int iterator = 1;
+  int works = 1;
+  //Checks whether prologue is correctly defined
+  if(GET_ALLOC(bp) != 0){
+    printf("Prologue error");
+    works = 0;
+  }
+  bp = NEXT_BLKP(bp);
+//Search through each block
+  while (GET_SIZE(HDRP(bp)) != 0){
+    //checks whether block complies with invariants, see below
+    if(mm_check_block(bp, iterator)){
+      works = 0;
+    }
+    //Incrementor to check the following block
+    bp = HDRP(NEXT_BLKP(bp));
+    ++iterator;
+  }
+  return works;
+}
 
-if(GET_ALLOC(iterator) != 1){
-printf("Error: Footer and header unequal");
-printf("%s\n", __func__);
-return;
+//Checks whether single blocks follow invariants
+//Helper function for mm_check_block
+static int mm_check_block(void *bp, int iterator){
+  int works = 1;
+  printf("Block number %d\n", iterator);
+  printf("Block size: %d\n", GET_SIZE(HDRP(bp)));
+  printf("Block allocation: %d\n", GET_ALLOC(HDRP(bp)));
+  //Check footer/header matching
+  if(GET_SIZE(HDRP(bp)) != GET_SIZE(FTRP(bp))){
+    printf("ERROR: Non-matching footer/header, block %d\n", iterator);
+    works = 0;
+  }
+  //Check for adjacent free blocks, as we immediate coalesce
+  if(GET_ALLOC(HDRP(bp)) == 0 && GET_ALLOC(HDRP(NEXT_BLKP(bp))) == 0){
+    printf("Lack of coalescing, block %d\n", iterator);
+    works = 0;
+  }
+  //Check for alignment issues
+  if(!ALIGNMENT_CHECK(HDRP(bp)) || !ALIGNMENT_CHECK(HDRP(bp))){
+    printf("Unaligned block %d\n", iterator);
+    works = 0;
+  }
+  //Check whether data leaks from heap or epilogue not implemented well
+  if (mem_heap_hi() < bp) {
+    printf("Memory max exceeded block %d\n", iterator);
+    works = 0;
+  }
+  return works;
 }
-if(iterator > mem_heap_hi()){
-printf("Error: Max Memory exceeded");
-printf("%s\n", __func__);
-return;
-}
-iterator += 4;
-}
-
-if(GET_ALLOC(iterator) == 0){
-iterator = FTRP(iterator);
-if(GET_ALLOC(iterator) != 0){
-printf("Error: Footer and header unequal");
-printf("%s\n", __func__);
-return;
-}
-if(GET_ALLOC(PREV_BLKP(iterator) == 0 ||
-GET_ALLOC(NEXT_BLKP(iterator)) == 0){
-printf("Error: Coalesce failed");
-printf("%s\n", __func__);
-return;
-}
-if(iterator > mem_heap_hi()){
-printf("Error: Max Memory exceeded");
-printf("%s\n", __func__);
-return;
-}
-iterator += 4;
-}
-}
-printf("all good");
-printf("%s\n", __func__);
-
-}
-*/
